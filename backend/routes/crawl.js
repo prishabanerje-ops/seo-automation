@@ -33,6 +33,26 @@ router.post("/start", (req, res) => {
   res.json({ jobs });
 });
 
+// GET /api/crawl/active — returns all in-memory running jobs (for page-refresh recovery)
+router.get("/active", (req, res) => {
+  const { getJobMeta } = require("../services/sf-cli.service");
+  const meta = getJobMeta();
+  const jobs = [];
+  for (const [jobId, m] of meta.entries()) {
+    const row = getDb().prepare("SELECT status, progress FROM crawl_jobs WHERE id = ?").get(jobId);
+    jobs.push({ jobId, siteId: m.siteId, label: m.label, url: m.url, status: row?.status ?? "running", progress: row?.progress ?? 0 });
+  }
+  res.json({ jobs });
+});
+
+// GET /api/crawl/logs/:jobId — replay buffered logs for a job
+router.get("/logs/:jobId", (req, res) => {
+  const { getJobMeta } = require("../services/sf-cli.service");
+  const meta = getJobMeta().get(req.params.jobId);
+  if (!meta) return res.json({ logs: [] });
+  res.json({ logs: meta.logs });
+});
+
 // GET /api/crawl/status/:jobId
 router.get("/status/:jobId", (req, res) => {
   const job = getDb().prepare("SELECT * FROM crawl_jobs WHERE id = ?").get(req.params.jobId);

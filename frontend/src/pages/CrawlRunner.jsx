@@ -652,7 +652,31 @@ export default function CrawlRunner() {
 
   useEffect(() => {
     socket.connect();
-    return () => socket.disconnect();
+
+    // On connect, reload any jobs still running in the backend
+    socket.on("connect", async () => {
+      try {
+        const res = await api.get("/crawl/active");
+        if (res.data.jobs?.length) {
+          const recovered = {};
+          for (const j of res.data.jobs) {
+            recovered[j.jobId] = { jobId: j.jobId, siteId: j.siteId, label: j.label, url: j.url, progress: j.progress ?? 0, status: j.status ?? "running", logs: [] };
+            subscribeToJob(j.jobId);
+            activeJobIds.current.push(j.jobId);
+            // Fetch buffered logs
+            api.get(`/crawl/logs/${j.jobId}`).then(r => {
+              if (r.data.logs?.length) {
+                setJobs(prev => ({ ...prev, [j.jobId]: { ...prev[j.jobId], logs: r.data.logs } }));
+              }
+            }).catch(() => {});
+          }
+          setJobs(prev => ({ ...recovered, ...prev }));
+          setRunning(true);
+        }
+      } catch {}
+    });
+
+    return () => { socket.off("connect"); socket.disconnect(); };
   }, []);
 
   function deriveNameFromUrl(url) {
@@ -711,6 +735,14 @@ export default function CrawlRunner() {
         newJobs[jobId] = { jobId, siteId, label, url: effectiveTargetUrl, progress: 0, status: "running", logs: [] };
         subscribeToJob(jobId);
         activeJobIds.current.push(jobId);
+        // Fetch any logs emitted before we subscribed (race condition on start)
+        setTimeout(() => {
+          api.get(`/crawl/logs/${jobId}`).then(r => {
+            if (r.data.logs?.length) {
+              setJobs(prev => ({ ...prev, [jobId]: { ...prev[jobId], logs: r.data.logs } }));
+            }
+          }).catch(() => {});
+        }, 300);
       }
       setJobs((prev) => ({ ...prev, ...newJobs }));
     } catch (err) {

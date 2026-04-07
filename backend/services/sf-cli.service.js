@@ -9,6 +9,19 @@ const { getExportTabs } = require("./sf-config.service");
 // jobId -> child process
 const runningJobs = new Map();
 
+// jobId -> { siteId, label, url, logs: [] }  (in-memory replay buffer)
+const jobMeta = new Map();
+
+function bufferLog(jobId, entry) {
+  const meta = jobMeta.get(jobId);
+  if (meta) {
+    meta.logs.push(entry);
+    if (meta.logs.length > 2000) meta.logs.shift(); // cap at 2000
+  }
+}
+
+function getJobMeta() { return jobMeta; }
+
 function startCrawl(siteIds, io, options = {}) {
   // options: { mode: 'spider'|'list', sfConfig: {}, urlList: ['...'] }
   const { mode = "spider", sfConfig = {}, urlList = [] } = options;
@@ -36,6 +49,9 @@ function startCrawl(siteIds, io, options = {}) {
     fs.mkdirSync(outputDir, { recursive: true });
 
     insertJob.run(jobId, siteId, mode);
+
+    // Register in replay buffer
+    jobMeta.set(jobId, { siteId, label: site.label, url: site.url, logs: [] });
 
     const exportTabs = getExportTabs(sfConfig).join(",");
 
@@ -124,6 +140,8 @@ function startCrawl(siteIds, io, options = {}) {
 
       emit(io, jobId, "progress", { progress: status === "completed" ? 100 : 0 });
       emit(io, jobId, "complete", { status, code });
+      // Keep meta for 5 min so late-joining clients can replay logs, then clean up
+      setTimeout(() => jobMeta.delete(jobId), 5 * 60 * 1000);
 
       if (status === "completed") {
         emit(io, jobId, "log", { type: "info", message: "Parsing results..." });
@@ -164,7 +182,8 @@ function cancelCrawl(jobId) {
 }
 
 function emit(io, jobId, event, data) {
+  if (event === "log") bufferLog(jobId, data);
   io.emit(`crawl:${event}:${jobId}`, data);
 }
 
-module.exports = { startCrawl, cancelCrawl };
+module.exports = { startCrawl, cancelCrawl, getJobMeta };

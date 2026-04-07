@@ -1,5 +1,14 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragOverlay,
+} from "@dnd-kit/core";
+import { useDraggable, useDroppable } from "@dnd-kit/core";
 import { getSummary, getHistory, getTopIssues, getTasks, updateTask, deleteCrawlJob, getGscSummaryAll } from "../api/index.js";
 import { useSites } from "../context/SitesContext.jsx";
 
@@ -45,44 +54,95 @@ const SEV_PILL = {
   info:     { bg: "#EFF6FF",            color: "#1D4ED8" },
 };
 
-function KanbanCard({ task, onMove }) {
+// ─── Draggable card ───────────────────────────────────────────────────────────
+function KanbanCard({ task, isDragging = false }) {
   const s = SEV_PILL[task.severity] ?? SEV_PILL.info;
   const title = task.issue_type || task.url || "Untitled issue";
+  const { attributes, listeners, setNodeRef, transform } = useDraggable({ id: task.id });
+
+  const style = {
+    background: "var(--bg-raised)", border: `1px solid ${isDragging ? "var(--brand)" : "var(--border)"}`,
+    borderRadius: 8, padding: "10px 12px", marginBottom: 8,
+    cursor: isDragging ? "grabbing" : "grab",
+    opacity: isDragging ? 0.5 : 1,
+    boxShadow: isDragging ? "0 4px 16px rgba(72,54,254,0.18)" : "none",
+    transform: transform ? `translate(${transform.x}px, ${transform.y}px)` : undefined,
+    touchAction: "none",
+  };
+
   return (
-    <div style={{
-      background: "var(--bg-raised)", border: "1px solid var(--border)", borderRadius: 8,
-      padding: "10px 12px", marginBottom: 8
-    }}>
-      <div style={{ fontSize: 12, fontWeight: 500, color: "var(--text-primary)", lineHeight: 1.4, marginBottom: 6 }}>
+    <div ref={setNodeRef} style={style} {...listeners} {...attributes}>
+      <div style={{ fontSize: 12, fontWeight: 500, color: "var(--text-primary)", lineHeight: 1.4, marginBottom: 6, pointerEvents: "none" }}>
         {title}
       </div>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
-        <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
-          {task.severity && (
-            <span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 10, background: s.bg, color: s.color, fontWeight: 600 }}>
-              {task.severity}
-            </span>
-          )}
-          {task.site_label && (
-            <span style={{ fontSize: 10, color: "var(--text-muted)" }}>{task.site_label}</span>
-          )}
-        </div>
-        <select
-          value={task.status}
-          onChange={(e) => onMove(task.id, e.target.value)}
-          style={{
-            fontSize: 10, padding: "2px 4px", border: "1px solid var(--border)",
-            borderRadius: 4, background: "var(--bg-surface)", color: "var(--text-muted)", outline: "none"
-          }}
-        >
-          {KANBAN_COLS.map(c => <option key={c.key} value={c.key}>{c.label}</option>)}
-        </select>
+      <div style={{ display: "flex", gap: 5, alignItems: "center", pointerEvents: "none" }}>
+        {task.severity && (
+          <span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 10, background: s.bg, color: s.color, fontWeight: 600 }}>
+            {task.severity}
+          </span>
+        )}
+        {task.site_label && (
+          <span style={{ fontSize: 10, color: "var(--text-muted)" }}>{task.site_label}</span>
+        )}
+        {task.linear_url && (
+          <a
+            href={task.linear_url} target="_blank" rel="noreferrer"
+            onClick={e => e.stopPropagation()}
+            style={{ fontSize: 10, color: "var(--brand)", textDecoration: "none", marginLeft: "auto", pointerEvents: "auto" }}
+          >
+            Linear ↗
+          </a>
+        )}
       </div>
     </div>
   );
 }
 
+// ─── Droppable column ─────────────────────────────────────────────────────────
+function KanbanCol({ col, tasks, activeId }) {
+  const { setNodeRef, isOver } = useDroppable({ id: col.key });
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}>
+        <span style={{ fontSize: 12, fontWeight: 700, color: col.color }}>{col.label}</span>
+        <span style={{ fontSize: 11, color: "var(--text-muted)", background: "var(--bg-surface)", padding: "1px 6px", borderRadius: 10 }}>
+          {tasks.length}
+        </span>
+      </div>
+      <div
+        ref={setNodeRef}
+        style={{
+          minHeight: 80,
+          borderRadius: 8,
+          background: isOver ? "var(--brand-subtle)" : "transparent",
+          border: isOver ? "2px solid var(--brand-light)" : "2px solid transparent",
+          transition: "all 100ms ease",
+          padding: isOver ? 4 : 0,
+        }}
+      >
+        {tasks.map(t => (
+          <KanbanCard key={t.id} task={t} isDragging={t.id === activeId} />
+        ))}
+        {tasks.length === 0 && !isOver && (
+          <div style={{
+            border: "2px dashed var(--border)", borderRadius: 8, height: 80,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: 12, color: "var(--text-muted)"
+          }}>
+            Drop here
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Kanban board with dnd-kit ────────────────────────────────────────────────
 function KanbanBoard({ tasks, onMove }) {
+  const [activeId, setActiveId] = useState(null);
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
+
   if (!tasks.length) {
     return (
       <div style={{ padding: "32px 0", textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>
@@ -91,36 +151,50 @@ function KanbanBoard({ tasks, onMove }) {
     );
   }
 
+  const activeTask = tasks.find(t => t.id === activeId);
+
+  function handleDragStart({ active }) {
+    setActiveId(active.id);
+  }
+
+  function handleDragEnd({ active, over }) {
+    setActiveId(null);
+    if (!over || active.id === over.id) return;
+    const targetCol = KANBAN_COLS.find(c => c.key === over.id);
+    if (!targetCol) return;
+    const task = tasks.find(t => t.id === active.id);
+    if (task && task.status !== targetCol.key) {
+      onMove(active.id, targetCol.key);
+    }
+  }
+
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
-      {KANBAN_COLS.map(col => {
-        const colTasks = tasks.filter(t => t.status === col.key);
-        return (
-          <div key={col.key}>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}>
-              <span style={{ fontSize: 12, fontWeight: 600, color: col.color }}>{col.label}</span>
-              <span style={{ fontSize: 11, color: "var(--text-muted)", background: "var(--bg-surface)", padding: "1px 6px", borderRadius: 10 }}>
-                {colTasks.length}
-              </span>
-            </div>
-            <div style={{ minHeight: 80 }}>
-              {colTasks.map(t => (
-                <KanbanCard key={t.id} task={t} onMove={onMove} />
-              ))}
-              {colTasks.length === 0 && (
-                <div style={{
-                  border: "2px dashed var(--border)", borderRadius: 8, height: 80,
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  fontSize: 12, color: "var(--text-muted)"
-                }}>
-                  Empty
-                </div>
-              )}
+    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
+        {KANBAN_COLS.map(col => (
+          <KanbanCol
+            key={col.key}
+            col={col}
+            tasks={tasks.filter(t => t.status === col.key)}
+            activeId={activeId}
+          />
+        ))}
+      </div>
+      <DragOverlay>
+        {activeTask ? (
+          <div style={{
+            background: "var(--bg-raised)", border: "1px solid var(--brand)",
+            borderRadius: 8, padding: "10px 12px",
+            boxShadow: "0 8px 24px rgba(72,54,254,0.20)",
+            cursor: "grabbing", opacity: 0.95
+          }}>
+            <div style={{ fontSize: 12, fontWeight: 500, color: "var(--text-primary)", lineHeight: 1.4 }}>
+              {activeTask.issue_type || activeTask.url || "Untitled issue"}
             </div>
           </div>
-        );
-      })}
-    </div>
+        ) : null}
+      </DragOverlay>
+    </DndContext>
   );
 }
 
@@ -131,6 +205,7 @@ export default function FounderView() {
   const [history, setHistory]         = useState([]);
   const [topIssues, setTopIssues]     = useState([]);
   const [tasks, setTasks]             = useState([]);
+  const [taskView, setTaskView]       = useState("kanban"); // "kanban" | "list"
   const [loading, setLoading]         = useState(true);
   const [gscAll, setGscAll]           = useState(null);
 
@@ -170,6 +245,12 @@ export default function FounderView() {
   async function moveTask(id, status) {
     setTasks(prev => prev.map(t => t.id === id ? { ...t, status } : t));
     try { await updateTask(id, { status }); }
+    catch { getTasks().then(r => setTasks(r.data.tasks ?? [])).catch(() => {}); }
+  }
+
+  async function changeSeverity(id, severity) {
+    setTasks(prev => prev.map(t => t.id === id ? { ...t, severity } : t));
+    try { await updateTask(id, { severity }); }
     catch { getTasks().then(r => setTasks(r.data.tasks ?? [])).catch(() => {}); }
   }
 
@@ -394,15 +475,118 @@ export default function FounderView() {
         </div>
       </div>
 
-      {/* Kanban board — wired to task_status table */}
+      {/* Task board — Kanban or List view */}
       <div className="card" style={{ padding: 0, overflow: "hidden" }}>
         <div style={{ padding: "14px 20px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>Team Kanban — Issue Tracking</span>
-          <span style={{ fontSize: 11, color: "var(--text-muted)" }}>Use dropdowns to move issues between columns</span>
+          <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>Team Tasks — Issue Tracking</span>
+          <div style={{ display: "flex", gap: 4 }}>
+            {["kanban", "list"].map(v => (
+              <button key={v} onClick={() => setTaskView(v)} style={{
+                fontSize: 12, padding: "4px 12px", borderRadius: 6, cursor: "pointer",
+                border: "1px solid var(--border)",
+                background: taskView === v ? "var(--brand)" : "var(--bg-surface)",
+                color: taskView === v ? "#fff" : "var(--text-secondary)",
+                fontWeight: taskView === v ? 600 : 400,
+              }}>
+                {v === "kanban" ? "Kanban" : "List"}
+              </button>
+            ))}
+          </div>
         </div>
-        <div style={{ padding: "16px 20px" }}>
-          <KanbanBoard tasks={tasks} onMove={moveTask} />
-        </div>
+
+        {taskView === "kanban" ? (
+          <div style={{ padding: "16px 20px" }}>
+            <KanbanBoard tasks={tasks} onMove={moveTask} />
+          </div>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            {tasks.length === 0 ? (
+              <div style={{ padding: "32px 20px", textAlign: "center", fontSize: 12, color: "var(--text-muted)" }}>
+                No tasks yet. Issues from crawl results can be tracked here.
+              </div>
+            ) : (
+              <table className="data-table" style={{ width: "100%" }}>
+                <thead>
+                  <tr>
+                    <th>Issue</th>
+                    <th style={{ width: 110 }}>Section</th>
+                    <th style={{ width: 130 }}>Severity</th>
+                    <th style={{ width: 150 }}>Status</th>
+                    <th style={{ width: 110 }}>Site</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {tasks.map(task => {
+                    const sp = SEV_PILL[task.severity] ?? SEV_PILL.info;
+                    return (
+                      <tr key={task.id}>
+                        <td>
+                          <div style={{ fontSize: 12, fontWeight: 500, color: "var(--text-primary)" }}>
+                            {task.issue_type || "Untitled issue"}
+                          </div>
+                          {task.url && (
+                            <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 380 }}>
+                              {task.url}
+                            </div>
+                          )}
+                        </td>
+                        <td>
+                          {task.section && (
+                            <span style={{ fontSize: 11, padding: "2px 7px", borderRadius: 6, background: "var(--brand-subtle)", color: "var(--brand)", fontWeight: 500 }}>
+                              {task.section}
+                            </span>
+                          )}
+                        </td>
+                        <td>
+                          <select
+                            value={task.severity || ""}
+                            onChange={e => changeSeverity(task.id, e.target.value)}
+                            style={{
+                              fontSize: 11, padding: "3px 8px", borderRadius: 20, fontWeight: 600,
+                              border: `1px solid ${sp.bg}`,
+                              background: sp.bg, color: sp.color,
+                              cursor: "pointer", outline: "none",
+                            }}
+                          >
+                            <option value="critical">critical</option>
+                            <option value="warning">warning</option>
+                            <option value="info">info</option>
+                            <option value="ok">ok</option>
+                          </select>
+                          {task.severity_override && (
+                            <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 2 }}>
+                              orig: {task.severity_original}
+                            </div>
+                          )}
+                        </td>
+                        <td>
+                          <select
+                            value={task.status}
+                            onChange={e => moveTask(task.id, e.target.value)}
+                            style={{
+                              fontSize: 11, padding: "3px 8px", borderRadius: 6,
+                              border: "1px solid var(--border)",
+                              background: "var(--bg-surface)", color: "var(--text-primary)",
+                              cursor: "pointer", outline: "none",
+                            }}
+                          >
+                            <option value="backlog">Backlog</option>
+                            <option value="in_progress">In Progress</option>
+                            <option value="review">In Review</option>
+                            <option value="done">Done</option>
+                          </select>
+                        </td>
+                        <td style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                          {task.site_label || task.site_id}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
       </div>
 
       {/* GSC Summary block — always visible */}

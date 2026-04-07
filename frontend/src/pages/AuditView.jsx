@@ -27,6 +27,43 @@ const SEV_STYLE = {
   ok:       { bg: "#F0FDF4",            color: "#15803D",              border: "#BBF7D0" },
 };
 
+const SUBSECTION_MAP = {
+  // meta-tags
+  "missing-title":        "Title Tags",
+  "title-too-short":      "Title Tags",
+  "title-too-long":       "Title Tags",
+  "duplicate-title":      "Title Tags",
+  "missing-meta-desc":    "Meta Descriptions",
+  "meta-desc-too-short":  "Meta Descriptions",
+  "meta-desc-too-long":   "Meta Descriptions",
+  "duplicate-meta-desc":  "Meta Descriptions",
+  // headings
+  "missing-h1":           "H1 Tags",
+  "h1-too-long":          "H1 Tags",
+  "h1-matches-title":     "H1 Tags",
+  "multiple-h1":          "H1 Tags",
+  "missing-h2":           "H2 Tags",
+  // response-codes
+  "404":                  "4xx Errors",
+  "5xx":                  "5xx Errors",
+  "302-redirect":         "Redirects",
+  "redirect-chain":       "Redirects",
+  // internal-links
+  "orphan-page":          "Orphan Pages",
+  "over-linked":          "Link Distribution",
+  "broken-link":          "Broken Links",
+  // images
+  "large-image":          "Image Size",
+  "unused-image":         "Image Usage",
+  "non-indexable-image":  "Image Indexability",
+  // canonicals
+  "missing-canonical":    "Canonical Tags",
+  "canonical-cross-domain": "Canonical Tags",
+  // structured-data
+  "no-schema":            "Schema Markup",
+  "schema-errors":        "Schema Markup",
+};
+
 const PAGE_SIZE = 100;
 
 function fmtDate(d) { return d ? new Date(d).toLocaleString() : "—"; }
@@ -52,6 +89,20 @@ function SectionBadge({ section }) {
       fontWeight: 500, whiteSpace: "nowrap"
     }}>
       {section}
+    </span>
+  );
+}
+
+function SubsectionBadge({ issueType }) {
+  const label = SUBSECTION_MAP[issueType];
+  if (!label) return null;
+  return (
+    <span style={{
+      fontSize: 11, padding: "2px 8px", borderRadius: 6,
+      background: "#F3F4F6", color: "#374151",
+      fontWeight: 500, whiteSpace: "nowrap"
+    }}>
+      {label}
     </span>
   );
 }
@@ -339,6 +390,7 @@ export default function AuditView() {
                     <tr>
                       <th>URL</th>
                       <th style={{ width: 140 }}>Section</th>
+                      <th style={{ width: 120 }}>Subsection</th>
                       <th style={{ width: 100 }}>Severity</th>
                       <th style={{ width: 160 }}>Issue Type</th>
                       <th style={{ width: 32 }}></th>
@@ -370,6 +422,7 @@ export default function AuditView() {
                               {row.label && <span style={{ fontSize: 11, color: "var(--text-muted)", display: "block", marginTop: 2 }}>{row.label}</span>}
                             </td>
                             <td><SectionBadge section={row.section} /></td>
+                            <td><SubsectionBadge issueType={row.issue_type} /></td>
                             <td><SeverityPill severity={row.severity} /></td>
                             <td style={{ fontSize: 12, color: "var(--text-secondary)", fontFamily: "'JetBrains Mono', monospace" }}>
                               {row.issue_type || "—"}
@@ -387,7 +440,7 @@ export default function AuditView() {
                           </tr>
                           {isExpanded && (
                             <tr>
-                              <td colSpan={5} style={{ background: "var(--bg-surface)", padding: "12px 20px" }}>
+                              <td colSpan={6} style={{ background: "var(--bg-surface)", padding: "12px 20px" }}>
                                 <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10 }}>
                                   {detailKeys.map((k) => (
                                     <div key={k} style={{ background: "var(--bg-raised)", border: "1px solid var(--border)", borderRadius: 8, padding: "8px 12px" }}>

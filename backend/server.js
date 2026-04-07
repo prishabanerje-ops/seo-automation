@@ -7,6 +7,8 @@ const { Server } = require("socket.io");
 const { migrate: migrate001 } = require("./db/migrations/001_initial");
 const { migrate: migrate002 } = require("./db/migrations/002_v3_additions");
 const { migrate: migrate003 } = require("./db/migrations/003_gsc_extended");
+const { migrate: migrate004 } = require("./db/migrations/004_site_sf_config");
+const { migrate: migrate005 } = require("./db/migrations/005_task_severity");
 const { getDb } = require("./db/sqlite");
 const { authMiddleware } = require("./middleware/auth");
 
@@ -72,6 +74,8 @@ function init() {
   migrate001();
   migrate002();
   migrate003();
+  migrate004();
+  migrate005();
 
   const db = getDb();
 

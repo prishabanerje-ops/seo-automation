@@ -38,6 +38,34 @@ router.post("/slack/:siteId", async (req, res) => {
   }
 });
 
+// POST /api/notify/slack/task — post a Claude task suggestion to Slack
+router.post("/slack/task", async (req, res) => {
+  const { issueType, url, severity, suggestion } = req.body;
+  const message = {
+    text: `SEO Issue: ${issueType || "Unknown"}`,
+    blocks: [
+      { type: "header", text: { type: "plain_text", text: `SEO Issue: ${issueType || "Unknown"}` } },
+      {
+        type: "section",
+        fields: [
+          { type: "mrkdwn", text: `*URL:*\n${url || "N/A"}` },
+          { type: "mrkdwn", text: `*Severity:*\n${severity || "Unknown"}` }
+        ]
+      },
+      {
+        type: "section",
+        text: { type: "mrkdwn", text: `*Claude's Recommendation:*\n${suggestion ? suggestion.slice(0, 2900) : "No suggestion available"}` }
+      }
+    ]
+  };
+  try {
+    await sendSlack(message);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /api/notify/email/test
 router.post("/email/test", async (req, res) => {
   try {

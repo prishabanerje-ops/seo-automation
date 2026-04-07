@@ -14,7 +14,10 @@ router.get("/", (req, res) => {
       ts.id, ts.audit_result_id, ts.site_id, ts.status,
       ts.assignee_id, ts.linear_ticket_id, ts.linear_url,
       ts.created_at, ts.updated_at,
-      ar.url, ar.severity, ar.issue_type, ar.section,
+      ar.url, ar.issue_type, ar.section,
+      COALESCE(ts.severity, ar.severity) as severity,
+      ts.severity as severity_override,
+      ar.severity as severity_original,
       s.label as site_label, s.color as site_color
     FROM task_status ts
     LEFT JOIN audit_results ar ON ar.id = ts.audit_result_id
@@ -44,17 +47,22 @@ router.post("/", (req, res) => {
 
 // PATCH /api/tasks/:id — update status (and optionally assignee)
 router.patch("/:id", (req, res) => {
-  const { status, assignee_id } = req.body;
+  const { status, assignee_id, severity } = req.body;
   const db = getDb();
 
-  const valid = ["backlog", "in_progress", "review", "done"];
-  if (status && !valid.includes(status))
+  const validStatus = ["backlog", "in_progress", "review", "done"];
+  if (status && !validStatus.includes(status))
     return res.status(400).json({ error: "Invalid status" });
+
+  const validSeverity = ["critical", "warning", "info", "ok"];
+  if (severity && !validSeverity.includes(severity))
+    return res.status(400).json({ error: "Invalid severity" });
 
   const sets = [];
   const params = [];
   if (status)      { sets.push("status = ?");      params.push(status); }
   if (assignee_id !== undefined) { sets.push("assignee_id = ?"); params.push(assignee_id); }
+  if (severity !== undefined) { sets.push("severity = ?"); params.push(severity || null); }
   if (!sets.length) return res.status(400).json({ error: "Nothing to update" });
 
   sets.push("updated_at = datetime('now')");

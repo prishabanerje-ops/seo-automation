@@ -2,6 +2,20 @@ import axios from "axios";
 
 const api = axios.create({ baseURL: "/api" });
 
+// 401 interceptor — redirect to login when session expires
+api.interceptors.response.use(
+  (res) => res,
+  (err) => {
+    if (err.response?.status === 401) {
+      const current = window.location.pathname;
+      if (current !== "/login" && current !== "/setup" && !current.startsWith("/invite")) {
+        window.location.replace(`/login?from=${encodeURIComponent(current)}`);
+      }
+    }
+    return Promise.reject(err);
+  }
+);
+
 export const getSites = () => api.get("/sites");
 export const getHealth = () => axios.get("/health");
 

@@ -6,7 +6,11 @@ const router = express.Router();
 
 function getLinearKey(projectId) {
   const db = getDb();
-  const conn = db.prepare("SELECT api_key_enc FROM linear_connections WHERE project_id = ? LIMIT 1").get(projectId || "");
+  // Try site-specific first, then global (""), then env
+  let conn = db.prepare("SELECT api_key_enc FROM linear_connections WHERE project_id = ? LIMIT 1").get(projectId || "");
+  if (!conn && projectId) {
+    conn = db.prepare("SELECT api_key_enc FROM linear_connections WHERE project_id = '' LIMIT 1").get();
+  }
   return conn?.api_key_enc || process.env.LINEAR_API_KEY || null;
 }
 
@@ -92,6 +96,13 @@ router.post("/ticket", async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// DELETE /api/linear/disconnect/:projectId
+router.delete("/disconnect/:projectId", (req, res) => {
+  const db = getDb();
+  db.prepare("DELETE FROM linear_connections WHERE project_id = ?").run(req.params.projectId);
+  res.json({ ok: true });
 });
 
 // GET /api/linear/ticket/:auditResultId

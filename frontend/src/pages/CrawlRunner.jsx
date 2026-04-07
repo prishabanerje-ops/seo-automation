@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
 import api, { compareCrawls } from "../api/index.js";
 import { useSites } from "../context/SitesContext.jsx";
+import SFDesktopUI from "../components/SFDesktopUI.jsx";
 
 const LOG_COLORS = {
   info:    "var(--info)",
@@ -638,6 +639,7 @@ export default function CrawlRunner() {
   const [importStatus, setImportStatus] = useState(null);
   const activeJobIds = useRef([]);
   const logsEndRef = useRef(null);
+  const [sfViewJobs, setSfViewJobs] = useState({});  // jobId → boolean
 
   // Pre-select the active site when sites load
   useEffect(() => {
@@ -706,7 +708,7 @@ export default function CrawlRunner() {
       });
       const newJobs = {};
       for (const { jobId, siteId, label } of res.data.jobs) {
-        newJobs[jobId] = { jobId, siteId, label, progress: 0, status: "running", logs: [] };
+        newJobs[jobId] = { jobId, siteId, label, url: effectiveTargetUrl, progress: 0, status: "running", logs: [] };
         subscribeToJob(jobId);
         activeJobIds.current.push(jobId);
       }
@@ -982,18 +984,37 @@ export default function CrawlRunner() {
                   width: `${job.progress}%`, background: progressBarColor(job.status)
                 }} />
               </div>
-              {/* Log viewer */}
-              <div style={{
-                background: "var(--bg-surface)", fontFamily: "'JetBrains Mono', monospace",
-                fontSize: 12, padding: "10px 14px", height: 200, overflowY: "auto",
-                display: "flex", flexDirection: "column", gap: 2
-              }}>
-                {job.logs.map((entry, i) => (
-                  <div key={i} style={{ color: LOG_COLORS[entry.type] ?? "var(--text-secondary)" }}>{entry.message}</div>
+              {/* SF View toggle */}
+              <div style={{ padding: "6px 18px", background: "var(--bg-surface)", borderBottom: "1px solid var(--border)", display: "flex", gap: 6 }}>
+                {["Logs", "SF Desktop"].map(v => (
+                  <button key={v}
+                    onClick={() => setSfViewJobs(prev => ({ ...prev, [job.jobId]: v === "SF Desktop" }))}
+                    style={{
+                      fontSize: 11, padding: "3px 10px", borderRadius: 6, cursor: "pointer",
+                      border: "1px solid var(--border)",
+                      background: (sfViewJobs[job.jobId] ? v === "SF Desktop" : v === "Logs") ? "var(--brand)" : "var(--bg-surface)",
+                      color:      (sfViewJobs[job.jobId] ? v === "SF Desktop" : v === "Logs") ? "#fff" : "var(--text-secondary)",
+                      fontWeight: (sfViewJobs[job.jobId] ? v === "SF Desktop" : v === "Logs") ? 600 : 400,
+                    }}>{v}</button>
                 ))}
-                {job.logs.length === 0 && <div style={{ color: "var(--text-muted)" }}>Waiting for output…</div>}
-                <div ref={logsEndRef} />
               </div>
+
+              {sfViewJobs[job.jobId] ? (
+                <SFDesktopUI job={job} onCancel={() => handleCancel(job.jobId)} />
+              ) : (
+                /* Log viewer */
+                <div style={{
+                  background: "var(--bg-surface)", fontFamily: "'JetBrains Mono', monospace",
+                  fontSize: 12, padding: "10px 14px", height: 200, overflowY: "auto",
+                  display: "flex", flexDirection: "column", gap: 2
+                }}>
+                  {job.logs.map((entry, i) => (
+                    <div key={i} style={{ color: LOG_COLORS[entry.type] ?? "var(--text-secondary)" }}>{entry.message}</div>
+                  ))}
+                  {job.logs.length === 0 && <div style={{ color: "var(--text-muted)" }}>Waiting for output…</div>}
+                  <div ref={logsEndRef} />
+                </div>
+              )}
             </div>
           ))}
         </div>

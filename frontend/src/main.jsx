@@ -4,6 +4,7 @@ import { RouterProvider } from "react-router-dom";
 import { router } from "./router.jsx";
 import { SitesProvider } from "./context/SitesContext.jsx";
 import { AuthProvider } from "./context/AuthContext.jsx";
+import { IntentionalRulesProvider } from "./context/IntentionalRulesContext.jsx";
 import api from "./api/index.js";
 import "./index.css";
 
@@ -26,7 +27,9 @@ ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
     <AuthProvider>
       <SitesProvider>
-        <RouterProvider router={router} />
+        <IntentionalRulesProvider>
+          <RouterProvider router={router} />
+        </IntentionalRulesProvider>
       </SitesProvider>
     </AuthProvider>
   </React.StrictMode>

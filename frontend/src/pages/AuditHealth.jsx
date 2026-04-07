@@ -565,34 +565,36 @@ const CATEGORIES = [
 
 const TOTAL = CATEGORIES.reduce((s, c) => s + c.checks, 0);
 
-// Maps each category to the backend section key(s) that supply its crawl data
+// Maps each category to the backend section key(s) that supply its crawl data.
+// Only keys that Screaming Frog actually exports are valid:
+// response-codes | meta-tags | headings | images | canonicals | internal-links | structured-data
 const SECTION_MAP = {
-  "Response Codes & HTTP Status":  ["response-codes"],
-  "Redirects":                     ["redirects"],
-  "404 & Status Errors":           ["404-errors"],
-  "HTTPS & Security":              ["https-security"],
-  "Canonical Tags":                ["canonicals"],
-  "Robots.txt":                    ["robots-txt"],
-  "Meta Robots & Indexation":      ["meta-robots"],
-  "URL Structure":                 ["url-structure"],
-  "Title Tags":                    ["meta-tags"],
-  "Meta Descriptions":             ["meta-tags"],
-  "Headings":                      ["headings"],
-  "Content Quality & Duplicates":  ["content-quality"],
-  "Keyword Strategy":              ["keyword-strategy"],
-  "Sitemaps":                      ["sitemaps"],
-  "JavaScript & Rendering":        ["javascript-rendering"],
-  "HTML Structure":                ["html-structure"],
-  "M-Site vs Desktop":             ["m-site-desktop"],
-  "Schema & Structured Data":      ["structured-data"],
-  "Images & Media":                ["images-media"],
-  "Core Web Vitals & Page Speed":  ["core-web-vitals"],
-  "Internal Linking & Architecture":["internal-links"],
-  "Local SEO":                     ["local-seo"],
-  "Backlinks & Authority":         [],
-  "Hreflang":                      ["hreflang"],
-  "Analytics & Tracking":          ["analytics-tracking"],
-  "Log File & Crawl Analysis":     [],
+  "Response Codes & HTTP Status":    ["response-codes"],
+  "Redirects":                       ["response-codes"],   // 3xx codes live in response-codes export
+  "404 & Status Errors":             ["response-codes"],   // 4xx codes live in response-codes export
+  "HTTPS & Security":                [],                   // no SF export section
+  "Canonical Tags":                  ["canonicals"],
+  "Robots.txt":                      [],                   // no SF export section
+  "Meta Robots & Indexation":        [],                   // no SF export section
+  "URL Structure":                   [],                   // no SF export section
+  "Title Tags":                      ["meta-tags"],
+  "Meta Descriptions":               ["meta-tags"],
+  "Headings":                        ["headings"],
+  "Content Quality & Duplicates":    [],                   // no SF export section
+  "Keyword Strategy":                [],                   // no SF export section
+  "Sitemaps":                        [],                   // no SF export section
+  "JavaScript & Rendering":          [],                   // no SF export section
+  "HTML Structure":                  [],                   // no SF export section
+  "M-Site vs Desktop":               [],                   // no SF export section
+  "Schema & Structured Data":        ["structured-data"],
+  "Images & Media":                  ["images"],
+  "Core Web Vitals & Page Speed":    [],                   // no SF export section
+  "Internal Linking & Architecture": ["internal-links"],
+  "Local SEO":                       [],                   // no SF export section
+  "Backlinks & Authority":           [],                   // no SF export section
+  "Hreflang":                        [],                   // no SF export section
+  "Analytics & Tracking":            [],                   // no SF export section
+  "Log File & Crawl Analysis":       [],                   // separate log import
 };
 
 // ─── Chevron icon ──────────────────────────────────────────────────────────────
@@ -773,21 +775,39 @@ function DataSourcePanel({ onClose }) {
 }
 
 export default function AuditHealth() {
-  const [checks, setChecks] = useState([]);
   const [expanded, setExpanded] = useState({});
   const [showStatus, setShowStatus] = useState(false);
-  const [sections, setSections] = useState({});     // section key → { critical, warning, info, ok }
+  const [sections, setSections] = useState({});
+  const [checking, setChecking] = useState(false);
+  const [checkDone, setCheckDone] = useState(false);
+  const [noCrawlData, setNoCrawlData] = useState(false);
   const { activeSiteId } = useSites();
 
-  useEffect(() => {
-    api.get("/checks").then(r => setChecks(r.data || [])).catch(() => {});
-  }, []);
+  function fetchSections(siteId) {
+    const id = siteId || activeSiteId;
+    if (!id) return;
+    setChecking(true);
+    setCheckDone(false);
+    setNoCrawlData(false);
+    api.get(`/reports/${id}/summary`)
+      .then(r => {
+        const s = r.data?.sections || {};
+        setSections(s);
+        const hasSections = Object.keys(s).length > 0;
+        setNoCrawlData(!hasSections);
+        if (hasSections) {
+          setCheckDone(true);
+          setTimeout(() => setCheckDone(false), 2000);
+        }
+      })
+      .catch(() => setNoCrawlData(true))
+      .finally(() => setChecking(false));
+  }
 
   useEffect(() => {
-    if (!activeSiteId) return;
-    api.get(`/reports/${activeSiteId}/summary`)
-      .then(r => setSections(r.data?.sections || {}))
-      .catch(() => {});
+    setSections({});
+    setNoCrawlData(false);
+    fetchSections(activeSiteId);
   }, [activeSiteId]);
 
   // Returns { working, notWorking } for a category based on real data availability
@@ -802,8 +822,25 @@ export default function AuditHealth() {
     return { working: workingAuto, notWorking };
   }
 
-  const passing = checks.filter(c => c.status === "pass").length;
-  const total = checks.length || TOTAL;
+  // Returns status badge info for a category
+  function getCategoryStatus(catName) {
+    const sectionKeys = SECTION_MAP[catName] || [];
+    if (sectionKeys.length === 0 || !sectionKeys.some(k => sections[k])) {
+      return { label: "No crawl data", icon: "⏳", cls: "badge-gray" };
+    }
+    const totals = sectionKeys.reduce((acc, k) => {
+      const s = sections[k] || {};
+      acc.critical += s.critical || 0;
+      acc.warning  += s.warning  || 0;
+      return acc;
+    }, { critical: 0, warning: 0 });
+    if (totals.critical > 0) return { label: `${totals.critical} critical`, icon: "✗", cls: "badge-critical" };
+    if (totals.warning  > 0) return { label: `${totals.warning} warnings`, icon: "⚠", cls: "badge-warning"  };
+    return { label: "Pass", icon: "✓", cls: "badge-success" };
+  }
+
+  const passing = CATEGORIES.reduce((sum, cat) => sum + getWorkingCounts(cat.name).working, 0);
+  const total = TOTAL;
 
   function toggleRow(name) {
     setExpanded(prev => ({ ...prev, [name]: !prev[name] }));
@@ -823,9 +860,24 @@ export default function AuditHealth() {
             style={{ fontSize:13, display:"flex", alignItems:"center", gap:6 }}>
             <span>🔌</span> Data Source Status
           </button>
-          <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-            <div style={{ fontFamily:"Plus Jakarta Sans,sans-serif", fontWeight:800, fontSize:28, color:"var(--brand)" }}>{passing}</div>
-            <div style={{ fontSize:13, color:"var(--text-secondary)" }}>/ {total} passing</div>
+          <button
+            className="btn btn-secondary"
+            onClick={() => fetchSections()}
+            disabled={checking || !activeSiteId}
+            style={{ fontSize:13, display:"flex", alignItems:"center", gap:6 }}
+          >
+            {checking ? "Checking…" : checkDone ? "✓ Done" : "Check Now"}
+          </button>
+          <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:4 }}>
+            <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+              <div style={{ fontFamily:"Plus Jakarta Sans,sans-serif", fontWeight:800, fontSize:28, color:"var(--brand)" }}>{passing}</div>
+              <div style={{ fontSize:13, color:"var(--text-secondary)" }}>/ {total} passing</div>
+            </div>
+            {noCrawlData && (
+              <div style={{ fontSize:11, color:"var(--warning)", fontWeight:500 }}>
+                No crawl data for this site — <a href="/crawl" style={{ color:"var(--brand)", textDecoration:"none" }}>run a crawl first</a>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -858,6 +910,7 @@ export default function AuditHealth() {
           <tbody>
             {CATEGORIES.map((cat) => {
               const { working, notWorking } = getWorkingCounts(cat.name);
+              const catStatus = getCategoryStatus(cat.name);
               const catChecks = CHECKS_DATA[cat.name] || [];
               const isOpen = !!expanded[cat.name];
 
@@ -883,15 +936,19 @@ export default function AuditHealth() {
                       </span>
                     </td>
                     <td>
-                      <span className="badge badge-gray">⏳ No crawl data</span>
+                      <span className={`badge ${catStatus.cls}`}>{catStatus.icon} {catStatus.label}</span>
                     </td>
                   </tr>
 
-                  {isOpen && catChecks.map((chk, idx) => (
+                  {isOpen && catChecks.map((chk, idx) => {
+                    const sectionKeys = SECTION_MAP[cat.name] || [];
+                    const hasData = sectionKeys.some(k => sections[k]);
+                    const isWorking = chk.auto && hasData;
+                    return (
                     <tr key={`${cat.name}-${idx}`}
                         style={{ background: "var(--surface-secondary, #f9fafb)" }}>
                       <td />
-                      <td colSpan={4} style={{ paddingLeft: 32, paddingTop: 10, paddingBottom: 10 }}>
+                      <td colSpan={2} style={{ paddingLeft: 32, paddingTop: 10, paddingBottom: 10 }}>
                         <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
                           {/* auto/manual pill */}
                           <span style={{
@@ -914,8 +971,20 @@ export default function AuditHealth() {
                           </div>
                         </div>
                       </td>
+                      <td style={{ paddingTop: 10, paddingBottom: 10 }}>
+                        <span style={{ fontSize: 12, fontWeight: 600 }}>
+                          {!chk.auto
+                            ? <span style={{ color: "#6B7280" }}>— manual review</span>
+                            : isWorking
+                              ? <span style={{ color: "#10B981", fontWeight: 700 }}>✓ working</span>
+                              : <span style={{ color: "#EF4444", fontWeight: 700 }}>✗ not working</span>
+                          }
+                        </span>
+                      </td>
+                      <td />
                     </tr>
-                  ))}
+                    );
+                  })}
                 </>
               );
             })}

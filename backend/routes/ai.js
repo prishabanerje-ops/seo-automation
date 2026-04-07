@@ -87,6 +87,60 @@ router.post("/suggest", async (req, res) => {
   }
 });
 
+// POST /api/ai/task-suggest — per-row Claude suggestion with spec's system prompt
+router.post("/task-suggest", async (req, res) => {
+  const { row, siteId } = req.body;
+  if (!row) return res.status(400).json({ error: "row required" });
+
+  const apiKey = getAnthropicKey();
+  if (!apiKey) return res.status(400).json({ error: "Anthropic API key not configured. Add ANTHROPIC_API_KEY to .env or Settings." });
+
+  const issueContext = [
+    `Issue Type: ${row.issue_type || "Unknown"}`,
+    `URL: ${row.url || "N/A"}`,
+    `Severity: ${row.severity || "Unknown"}`,
+    `Section: ${row.section || "N/A"}`,
+    row.label ? `Label: ${row.label}` : "",
+    row.data ? `Data: ${JSON.stringify(row.data, null, 2)}` : ""
+  ].filter(Boolean).join("\n");
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+
+  let fullText = "";
+  try {
+    const Anthropic = require("@anthropic-ai/sdk");
+    const client = new Anthropic.default({ apiKey });
+
+    const stream = await client.messages.stream({
+      model: "claude-sonnet-4-6",
+      max_tokens: 1500,
+      system: "You are an SEO expert assistant integrated into an audit dashboard. The user will share a specific SEO issue. Give a concise, actionable fix recommendation in 3-5 bullet points. Then write a ready-to-use Linear issue description in markdown (include: Problem, Impact, Steps to Fix, Acceptance Criteria).",
+      messages: [{ role: "user", content: issueContext }]
+    });
+
+    for await (const chunk of stream) {
+      if (chunk.type === "content_block_delta" && chunk.delta?.type === "text_delta") {
+        const text = chunk.delta.text;
+        fullText += text;
+        res.write(`data: ${JSON.stringify({ text })}\n\n`);
+      }
+    }
+
+    const suggestionId = uuidv4();
+    const db = getDb();
+    db.prepare("INSERT INTO ai_suggestions (id, check_id, job_id, site_id, type, response_text) VALUES (?, ?, ?, ?, 'task', ?)")
+      .run(suggestionId, row.url || "unknown", row.issue_type || "unknown", siteId || "", fullText);
+
+    res.write(`data: ${JSON.stringify({ done: true, id: suggestionId })}\n\n`);
+    res.end();
+  } catch (err) {
+    res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
+    res.end();
+  }
+});
+
 // POST /api/ai/suggest/:id/feedback
 router.post("/suggest/:id/feedback", (req, res) => {
   const { rating } = req.body; // 1 or -1

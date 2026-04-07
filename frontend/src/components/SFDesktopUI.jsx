@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import api from "../api/index.js";
 
 // ─── SF Brand Colors ──────────────────────────────────────────────────────────
 const SF = {
@@ -201,6 +202,9 @@ export default function SFDesktopUI({ job, onCancel }) {
   const elapsedRef  = useRef(0);
   const timerRef    = useRef(null);
 
+  // Real crawl data (replaces mock rows once available)
+  const [realRows,    setRealRows]    = useState(null); // null = not loaded yet
+
   // UI state
   const [activeTab,    setActiveTab]    = useState("Internal");
   const [selectedRow,  setSelectedRow]  = useState(null);
@@ -211,14 +215,26 @@ export default function SFDesktopUI({ job, onCancel }) {
   const [fullscreen,   setFullscreen]   = useState(false);
   const [auditSent,    setAuditSent]    = useState(false);
 
-  // Drive visible rows from timer (one row ~every 2s) — independent of real crawl progress
+  // Fetch real URL rows from backend (reads internal_all.csv)
+  const fetchRealRows = useCallback(async () => {
+    if (!job?.jobId) return;
+    try {
+      const r = await api.get(`/crawl/urls/${job.jobId}`);
+      if (r.data.rows?.length) {
+        setRealRows(r.data.rows);
+        setVisibleRows(r.data.rows.length);
+      }
+    } catch {}
+  }, [job?.jobId]);
+
+  // Drive visible rows from timer (one row ~every 2s) — only when no real data yet
   useEffect(() => {
-    if (simState !== "running") return;
+    if (simState !== "running" || realRows) return;
     const interval = setInterval(() => {
       setVisibleRows(prev => Math.min(prev + 1, mockRows.length));
     }, 2000);
     return () => clearInterval(interval);
-  }, [simState, mockRows.length]);
+  }, [simState, mockRows.length, realRows]);
 
   // Timer
   useEffect(() => {
@@ -233,18 +249,30 @@ export default function SFDesktopUI({ job, onCancel }) {
     return () => clearInterval(timerRef.current);
   }, [simState, jobStatus]);
 
-  // Stop when job completes
+  // When job completes → stop sim and load real SF data
   useEffect(() => {
     if (jobStatus === "completed" || jobStatus === "failed" || jobStatus === "cancelled") {
       setSimState("stopped");
-      setVisibleRows(mockRows.length);
+      if (jobStatus === "completed") {
+        fetchRealRows();
+      } else {
+        setVisibleRows(mockRows.length);
+      }
     }
   }, [jobStatus]);
 
-  const rows = mockRows.slice(0, visibleRows);
+  // Also try to load real data on mount (e.g. already-completed job opened in SF Desktop)
+  useEffect(() => {
+    if (jobStatus === "completed") fetchRealRows();
+  }, []);
+
+  // Which rows to display: real (from CSV) or simulated mock
+  const displayRows = realRows ?? mockRows;
+  const rows = realRows ? displayRows : displayRows.slice(0, visibleRows);
   const urlsCrawled = rows.length;
-  const urlsFound   = Math.round(urlsCrawled * 1.18);
+  const urlsFound   = realRows ? urlsCrawled : Math.round(urlsCrawled * 1.18);
   const speed       = elapsed > 0 ? (urlsCrawled / elapsed).toFixed(1) : "0.0";
+  const isSimulated = !realRows;
 
   // Sort
   const sorted = [...rows].sort((a, b) => {
@@ -348,6 +376,7 @@ export default function SFDesktopUI({ job, onCancel }) {
           <span>URLs Crawled: <strong style={{ color: SF.text }}>{urlsCrawled.toLocaleString()}</strong></span>
           <span>URLs Found: <strong style={{ color: SF.text }}>{urlsFound.toLocaleString()}</strong></span>
           <span>Time: <strong style={{ color: SF.text }}>{fmtTime(elapsed)}</strong></span>
+          {isSimulated && <span style={{ fontSize: 10, padding: "1px 5px", borderRadius: 3, background: "#fff3cd", color: "#856404", border: "1px solid #ffc107" }}>Simulated</span>}
           <span>Speed: <strong style={{ color: SF.text }}>{speed} /s</strong></span>
         </div>
         <div style={{ display: "flex", gap: 4 }}>

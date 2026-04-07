@@ -53,6 +53,48 @@ router.get("/logs/:jobId", (req, res) => {
   res.json({ logs: meta.logs });
 });
 
+// GET /api/crawl/urls/:jobId — return parsed rows from internal_all.csv for SF Desktop display
+router.get("/urls/:jobId", (req, res) => {
+  const fs = require("fs");
+  const { parse } = require("csv-parse/sync");
+  const db = getDb();
+  const job = db.prepare("SELECT site_id FROM crawl_jobs WHERE id = ?").get(req.params.jobId);
+  if (!job) return res.json({ rows: [] });
+
+  const outputDir = path.resolve(__dirname, "../exports", job.site_id);
+  const csvPath = path.join(outputDir, "internal_all.csv");
+  if (!fs.existsSync(csvPath)) return res.json({ rows: [] });
+
+  let raw;
+  try { raw = fs.readFileSync(csvPath, "utf8"); } catch { return res.json({ rows: [] }); }
+
+  let parsed;
+  try { parsed = parse(raw, { columns: true, skip_empty_lines: true, bom: true }); } catch { return res.json({ rows: [] }); }
+
+  const rows = parsed.map(r => ({
+    url:          r["Address"]                   ?? "",
+    contentType:  (r["Content Type"] ?? "").split(";")[0].trim(),
+    status:       parseInt(r["Status Code"])     || 0,
+    statusText:   r["Status"]                    ?? "",
+    indexability: r["Indexability"]              ?? "",
+    title:        r["Title 1"]                   ?? "",
+    titleLen:     parseInt(r["Title 1 Length"])  || 0,
+    metaDesc:     r["Meta Description 1"]        ?? "",
+    metaDescLen:  parseInt(r["Meta Description 1 Length"]) || 0,
+    h1:           r["H1-1"]                      ?? "",
+    h1Len:        parseInt(r["H1-1 Length"])     || 0,
+    h2:           r["H2-1"]                      ?? "",
+    wordCount:    parseInt(r["Word Count"])      || 0,
+    depth:        parseInt(r["Crawl Depth"])     || 0,
+    inlinks:      parseInt(r["Unique Links In"]) || parseInt(r["Links In"]) || 0,
+    outlinks:     parseInt(r["Unique Links Out"])|| parseInt(r["Links Out"])|| 0,
+    responseTime: parseInt(r["Response Time"])   || 0,
+    size:         parseInt(r["Size"])            || 0,
+  }));
+
+  res.json({ rows });
+});
+
 // GET /api/crawl/status/:jobId
 router.get("/status/:jobId", (req, res) => {
   const job = getDb().prepare("SELECT * FROM crawl_jobs WHERE id = ?").get(req.params.jobId);
